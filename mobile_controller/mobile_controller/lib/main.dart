@@ -73,6 +73,8 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isScanning = false;
   String _statusMessage = "Not connected";
   StreamSubscription? _scanSubscription;
+  StreamSubscription? _connectionSubscription;
+  Timer? _reconnectTimer;
 
   Future<bool> _requestPermissions() async {
     if (Platform.isAndroid) {
@@ -164,6 +166,40 @@ class _MyHomePageState extends State<MyHomePage> {
         _statusMessage = "Connecting to ${device.name}...";
       });
 
+      // Cancel any existing connection subscription
+      await _connectionSubscription?.cancel();
+
+      // Listen for connection state changes
+      _connectionSubscription = device.connectionState.listen((state) async {
+        print('Connection state changed: $state');
+        if (state == BluetoothConnectionState.disconnected) {
+          setState(() {
+            _isConnected = false;
+            _statusMessage = "Disconnected. Attempting to reconnect...";
+          });
+
+          // Start reconnection timer
+          _reconnectTimer?.cancel();
+          _reconnectTimer = Timer.periodic(const Duration(seconds: 5), (
+            timer,
+          ) async {
+            if (!_isConnected) {
+              print('Attempting to reconnect...');
+              try {
+                await device.connect();
+              } catch (e) {
+                print('Reconnection failed: $e');
+              }
+            } else {
+              timer.cancel();
+            }
+          });
+        } else if (state == BluetoothConnectionState.connected) {
+          _reconnectTimer?.cancel();
+          await _discoverServices(device);
+        }
+      });
+
       await device.connect();
       _device = device;
 
@@ -205,6 +241,46 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Future<void> _discoverServices(BluetoothDevice device) async {
+    try {
+      setState(() {
+        _statusMessage = "Discovering services...";
+      });
+
+      List<BluetoothService> services = await device.discoverServices();
+      for (var service in services) {
+        print('Found service: ${service.uuid}');
+        if (service.uuid.toString() == SERVICE_UUID) {
+          for (var characteristic in service.characteristics) {
+            print('Found characteristic: ${characteristic.uuid}');
+            if (characteristic.uuid.toString() == CHARACTERISTIC_UUID) {
+              _characteristic = characteristic;
+              setState(() {
+                _isConnected = true;
+                _statusMessage = "Connected to ${device.name}";
+                _isScanning = false;
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      // If we get here, we didn't find our service/characteristic
+      setState(() {
+        _statusMessage = "Device found but service not available";
+        _isScanning = false;
+      });
+      await device.disconnect();
+    } catch (e) {
+      print('Service discovery error: $e');
+      setState(() {
+        _statusMessage = "Error discovering services: $e";
+        _isScanning = false;
+      });
+    }
+  }
+
   Future<void> _sendToggleCommand() async {
     if (_characteristic != null) {
       try {
@@ -224,6 +300,8 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void dispose() {
     _scanSubscription?.cancel();
+    _connectionSubscription?.cancel();
+    _reconnectTimer?.cancel();
     super.dispose();
   }
 

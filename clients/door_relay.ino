@@ -11,6 +11,7 @@ BLEServer *pServer = nullptr;
 BLECharacteristic *pCharacteristic = nullptr;
 bool deviceConnected = false;
 bool relayState = false;
+bool oldDeviceConnected = false; // Track previous connection state
 
 // Service and characteristic UUIDs (must match the controller)
 #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -28,6 +29,10 @@ class MyServerCallbacks : public BLEServerCallbacks
     {
         deviceConnected = false;
         Serial.println("Client disconnected");
+
+        // Restart advertising
+        BLEDevice::startAdvertising();
+        Serial.println("Advertising restarted");
     }
 };
 
@@ -78,5 +83,20 @@ void setup()
 
 void loop()
 {
-    delay(2000); // Delay to reduce power consumption
+    // Handle disconnection
+    if (!deviceConnected && oldDeviceConnected)
+    {
+        delay(500);                  // Give the BLE stack a chance to get things ready
+        pServer->startAdvertising(); // Restart advertising
+        Serial.println("Advertising restarted");
+        oldDeviceConnected = deviceConnected;
+    }
+
+    // Handle connection
+    if (deviceConnected && !oldDeviceConnected)
+    {
+        oldDeviceConnected = deviceConnected;
+    }
+
+    delay(200); // Delay to reduce power consumption
 }
